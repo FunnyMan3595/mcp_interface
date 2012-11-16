@@ -5,7 +5,15 @@
 # details.
 
 import itertools, os, os.path, platform, shutil, subprocess, sys, tarfile, \
-       zipfile, tempfile
+       zipfile, tempfile, fnmatch, re, collections, StringIO, contextlib
+
+CONF_TOKEN = re.compile("%conf:([^%]*)%")
+
+class CompileFailed(Exception):
+    pass
+
+class ObfuscateFailed(Exception):
+    pass
 
 # Convenience functions.  These make the settings settings easier to work with.
 absolute = lambda rawpath: os.path.abspath(os.path.expanduser(rawpath))
@@ -13,7 +21,7 @@ relative = lambda relpath: absolute(os.path.join(BASE, relpath))
 def make_if_needed(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
-def clean_if_needed(dir):
+def create_or_clean(dir):
     if os.path.exists(dir):
         shutil.rmtree(dir)
     os.makedirs(dir)
@@ -40,10 +48,10 @@ if not os.path.exists(USER):
                       "category, not a project.")
 
 # Create/clean the temp directory.
-clean_if_needed(TEMP)
+create_or_clean(TEMP)
 
 # Create/clean the package directory.
-clean_if_needed(TARGET)
+create_or_clean(TARGET)
 
 # JAR files to build against.
 DEOBF_CLIENT = relative("temp/minecraft_exc.jar")
@@ -67,23 +75,30 @@ class Project(object):
     def __init__(self, directory):
         self.dir = directory
 
-        self.name = self.get_config("PROJECT_NAME") \
-                    or os.path.basename(directory)
-        self.version = self.get_config("VERSION")
-        self.package_name = self.get_config("PACKAGE_NAME")
-        self.hide_source = self.get_config("HIDE_SOURCE", is_boolean=True)
-        self.package_command = self.get_config("PACKAGE_COMMAND")
+        self.name            = self.get_config("PROJECT_NAME", os.path.basename(directory))
+        self.version         = self.get_config("VERSION",      "alpha")
+        self.package_name    = self.get_config("PACKAGE_NAME", self.name + "-" + self.version)
+        self.extension       = self.get_config("EXTENSION",    "zip")
+        self.dependencies    = self.get_config("DEPENDENCIES", [], data_type=list)
+        self.api             = self.get_config("API",          [], data_type=list)
+        self.hide_source     = self.get_config("HIDE_SOURCE",  False, data_type=bool)
 
-    def get_config(self, setting, is_boolean=False):
+    def get_config(self, setting, default=None, data_type=str):
         filename = os.path.join(self.dir, "conf", setting)
         exists = os.path.isfile(filename)
 
-        if is_boolean:
+        if data_type == bool:
             return exists
         elif not exists:
-            return None
+            return default
         else:
-            return open(filename).read().strip()
+            contents = open(filename).read().strip()
+            if data_type == str:
+                return contents
+            elif data_type == list:
+                contents = contents.replace(",","\n").replace(";","\n")
+                return contents.split()
+
 
     @staticmethod
     def collect_projects(root, projects):
@@ -136,7 +151,7 @@ class Project(object):
         elif side == FORGE:
             filename += "-universal"
 
-        filename += ".zip"
+        filename += "." + self.extension
 
         return os.path.join(TEMP, filename)
 
@@ -167,8 +182,8 @@ class Project(object):
 
         return all_files
 
-    def zip(self, archive_name, files=None, clean=False):
-        if not os.path.exists(archive_name):
+    def zip(self, archive_name, files=None, clean=False, do_replace=False):
+        if clean or not os.path.exists(archive_name):
             mode = "w"
         else:
             mode = "a"
@@ -178,23 +193,112 @@ class Project(object):
             if files is None:
                 for dir, subdirs, files in os.walk(".", followlinks=True):
                     for file in files:
-                        archive.write(os.path.join(dir, file))
+                        full_path = os.path.join(dir, file)
+                        if do_replace:
+                            contents = self.replace_conf(full_path)
+                            archive.writestr(full_path, contents)
+                        else:
+                            archive.write(full_path)
             else:
                 for file in files:
-                    archive.write(file)
+                    if do_replace:
+                        contents = self.replace_conf(file)
+                        archive.writestr(file, contents)
+                    else:
+                        archive.write(file)
         finally:
             archive.close()
 
-    def compile(self, side, out_dir, library_classpath):
+    def get_source_dirs(self, side):
         source_dirs = [os.path.join(self.dir, "src", "common")]
         if side == CLIENT:
             source_dirs.append(os.path.join(self.dir, "src", "client"))
         elif side == SERVER:
             source_dirs.append(os.path.join(self.dir, "src", "server"))
 
+        return source_dirs
+
+    def shorten_filename(self, filename):
+        path = [os.path.relpath(filename, self.dir)]
+
+        while path[0] != '':
+            path[0:1] = os.path.split(path[0])
+
+        if len(path) < 4:
+            return None
+
+        return os.path.join(*path[3:])
+
+    def is_api(self, filename):
+        short_filename = self.shorten_filename(filename)
+        if short_filename is None:
+            return False
+
+        for entry in self.api:
+            if fnmatch.fnmatch(short_filename, entry):
+                return True
+
+        return False
+
+    def replace_conf(self, filename, output_root=None):
+        input = filename
+
+        if output_root is not None:
+            output = os.path.join(output_root, self.shorten_filename(filename))
+
+            outdir = os.path.dirname(output)
+            if not os.path.exists(outdir):
+                os.makedirs(outdir)
+
+            stream = open(output, "w")
+        else:
+            output = None
+
+            @contextlib.contextmanager
+            def string_stream():
+                yield StringIO.StringIO()
+
+            stream = string_stream()
+
+        with open(input) as infile:
+            contents = infile.read()
+
+        split = CONF_TOKEN.split(contents)
+
+        with stream as outfile:
+            for index, token in enumerate(split):
+                if index % 2 == 0:
+                    outfile.write(token)
+                else:
+                    replacement = self.get_config(token)
+                    if replacement is not None:
+                        outfile.write(replacement)
+                    else:
+                        raise CompileFailed("No conf token '%s'" % token)
+
+        if output is None:
+            return outfile.getvalue()
+        return output
+
+    def compile(self, all_projects, side, out_dir, temp_dir, library_classpath, api=False):
+        create_or_clean(temp_dir)
+
         source_files = set()
-        for dir in source_dirs:
+        for dir in self.get_source_dirs(side):
             source_files.update(self.collect_files(dir, required_extension=".java"))
+
+        if api:
+            source_files = filter(self.is_api, source_files)
+
+        source_files = map(lambda f: self.replace_conf(f, temp_dir), source_files)
+
+        source_dirs = [temp_dir]
+        for dep in self.dependencies:
+            project = all_projects.get(dep, None)
+            if project is None:
+                add_warning(self, side, "Depends on %s, which is not available!" % dep)
+                continue
+            source_dirs += project.get_source_dirs(side)
 
         if side in [CLIENT, FORGE]:
             classpath = MCP_BIN_CLIENT + ":" + library_classpath
@@ -205,7 +309,7 @@ class Project(object):
                    "-sourcepath", ":".join(source_dirs), "-classpath",
                    classpath, "-d", out_dir] + list(source_files)
 
-        self.call_or_die(command)
+        self.call_or_die(command, CompileFailed)
 
     def obfuscate(self, side, stored_inheritance):
         classpath = "runtime/bin/jcommander-1.29.jar:runtime/bin/asm-all-3.3.1.jar:runtime/bin/mcp_deobfuscate-1.0.jar"
@@ -225,17 +329,14 @@ class Project(object):
                    "--infiles", self.get_package_file(side)]
 
         print "---Obfuscating %s---" % self.name
-        self.call_or_die(command)
+        self.call_or_die(command, ObfuscateFailed)
         print "---Obfuscation complete---"
         print
 
-    @staticmethod
-    def call_or_die(cmd, shell=False):
+    def call_or_die(self, cmd, error, shell=False):
         exit = subprocess.call(cmd, shell=shell)
         if exit != 0:
-            print "Command failed: %s" % cmd
-            print "Failed to package project %s.  Aborting." % project.name
-            sys.exit(1)
+            raise error("Command failed: %s" % cmd)
 
     def package(self, side, in_dir):
         """Packages this project's files."""
@@ -284,12 +385,12 @@ class Project(object):
             # To package these, we just change to the appropriate directory
             # and let the shell and zip command find everything in it.
             os.chdir(common_resources)
-            self.zip(package)
+            self.zip(package, do_replace=True)
             created = True
 
         if side != FORGE and os.path.isdir(resources):
             os.chdir(resources)
-            self.zip(package)
+            self.zip(package, do_replace=True)
             created = True
 
         os.chdir(BASE)
@@ -325,6 +426,38 @@ for filename in os.listdir(LIB):
 
 library_classpath = ":".join(libraries)
 
+projects_dict = {}
+for project in projects:
+    projects_dict[project.name] = project
+
+if have_forge:
+    sides = [FORGE]
+else:
+    sides = [CLIENT, SERVER]
+
+warnings = collections.defaultdict(lambda: [])
+def add_warning(project, side, warning):
+    warnings[project].append((side, warning))
+
+errors = collections.defaultdict(lambda: [])
+def add_error(project, side, error):
+    errors[project].append((side, error))
+
+compile_temp = os.path.join(TEMP, "compile_temp")
+
+api_dir = os.path.join(TEMP, "lib")
+create_or_clean(api_dir)
+api_count = 0
+for project in projects:
+    if project.api:
+        for side in sides:
+            project.compile(projects_dict, side, api_dir, compile_temp, library_classpath, api=True)
+            api_count += 1
+
+print "Built %d APIs." % api_count
+
+library_classpath += ":" + api_dir
+
 count = 0
 source_count = 0
 client_count = 0
@@ -333,32 +466,31 @@ for project in projects:
     print "Processing %s..." % project.name
     any_created = False
 
-    if have_forge:
-        sides = [FORGE]
-    else:
-        sides = [CLIENT, SERVER]
-
     for side in sides:
-        compile_dir = os.path.join(TEMP, project.name)
-        if side == SERVER:
-            compile_dir += "_server"
-        elif side == FORGE:
-            compile_dir += "_universal"
+        try:
+            compile_dir = os.path.join(TEMP, project.name)
+            if side == SERVER:
+                compile_dir += "_server"
+            elif side == FORGE:
+                compile_dir += "_universal"
 
-        clean_if_needed(compile_dir)
+            create_or_clean(compile_dir)
 
-        project.compile(side, compile_dir, library_classpath)
+            project.compile(projects_dict, side, compile_dir, compile_temp, library_classpath)
 
-        created = project.package(side, compile_dir)
+            created = project.package(side, compile_dir)
 
-        if created:
-            any_created = True
-            project.obfuscate(side, stored_inheritance)
+            if created:
+                any_created = True
+                project.obfuscate(side, stored_inheritance)
 
-            if side == CLIENT:
-                client_count += 1
-            elif side == SERVER:
-                server_count += 1
+                if side == CLIENT:
+                    client_count += 1
+                elif side == SERVER:
+                    server_count += 1
+        except Exception, e:
+            # You did something wrong!
+            add_error(project, side, e)
     if any_created:
         count += 1
         if not project.hide_source:
@@ -377,3 +509,28 @@ if count:
         smiley = ":)"
 
     print "Source included in packages for %d/%d projects.  %s" % (source_count, count, smiley)
+
+def print_messages(project_messages):
+    for project, messages in project_messages.items():
+        for side, message in messages:
+            if side == CLIENT:
+                side_name = "client"
+            elif side == SERVER:
+                side_name = "server"
+            else: # if side == FORGE:
+                side_name = "universal"
+            print "%s (%s): %s" % (project.name, side_name, message)
+
+if warnings:
+    print
+    print "Warnings in %d projects:" % len(warnings)
+
+    print_messages(warnings)
+
+if errors:
+    print
+    print "Errors in %d projects:" % len(errors)
+
+    print_messages(errors)
+
+    sys.exit(len(errors))
