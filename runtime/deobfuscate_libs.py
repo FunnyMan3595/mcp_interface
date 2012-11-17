@@ -9,7 +9,7 @@ import itertools, os, os.path, platform, shutil, subprocess, sys, tarfile, \
 
 # Convenience functions.  These make the settings settings easier to work with.
 absolute = lambda rawpath: os.path.abspath(os.path.expanduser(rawpath))
-relative = lambda relpath: absolute(os.path.join(BASE, relpath))
+relative = lambda *relpath: absolute(os.path.join(BASE, *relpath))
 def make_if_needed(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
@@ -59,11 +59,14 @@ else:
 deobfuscate_libs."""
     sys.exit(1)
 
+FORGE_INSTALLED = relative("src", "common")
 CLIENT_SRG = os.path.join(MCP_TEMP, "client_ro.srg")
 SERVER_SRG = os.path.join(MCP_TEMP, "server_ro.srg")
 SRG = os.path.join(TEMP, "full.srg")
 
-if os.path.exists(CLIENT_SRG) and os.path.exists(SERVER_SRG):
+if os.path.exists(FORGE_INSTALLED):
+    shutil.copy2(CLIENT_SRG, SRG)
+elif os.path.exists(CLIENT_SRG) and os.path.exists(SERVER_SRG):
     call_or_die("cat %s %s | sort -u > %s" % (CLIENT_SRG, SERVER_SRG, SRG),
                 shell=True)
 elif os.path.exists(CLIENT_SRG):
