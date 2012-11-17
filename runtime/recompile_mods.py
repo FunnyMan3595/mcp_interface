@@ -196,6 +196,7 @@ class Project(object):
                         full_path = os.path.join(dir, file)
                         if do_replace:
                             contents = self.replace_conf(full_path)
+                            full_path = os.path.relpath(full_path)
                             archive.writestr(full_path, contents)
                         else:
                             archive.write(full_path)
@@ -203,6 +204,7 @@ class Project(object):
                 for file in files:
                     if do_replace:
                         contents = self.replace_conf(file)
+                        full_path = os.path.relpath(full_path)
                         archive.writestr(file, contents)
                     else:
                         archive.write(file)
