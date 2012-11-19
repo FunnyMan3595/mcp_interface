@@ -195,12 +195,13 @@ print
 print "---Deobfuscating libraries---"
 obf_libraries = map(lambda library: library.name, libraries)
 
-command = BASIC_COMMAND + ["--stored_inheritance"] + obf_inheritances + [
-                           "--config", SRG,
-                           "--indir", OBF_LIBS, "--outdir", DEOBF_LIBS,
-                           "--infiles"] + obf_libraries
+if obf_libraries:
+    command = BASIC_COMMAND + ["--stored_inheritance"] + obf_inheritances + [
+                               "--config", SRG,
+                               "--indir", OBF_LIBS, "--outdir", DEOBF_LIBS,
+                               "--infiles"] + obf_libraries
 
-call_or_die(command)
+    call_or_die(command)
 
 print "---Libraries deobfuscated---"
 print
