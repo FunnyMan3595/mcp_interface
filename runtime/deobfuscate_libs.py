@@ -48,7 +48,7 @@ def call_or_die(cmd, shell=False):
     exit = subprocess.call(cmd, shell=shell)
     if exit != 0:
         print "Command failed: %s" % cmd
-        print "Failed to package project %s.  Aborting." % project.name
+        print "Aborting deobfuscate."
         sys.exit(1)
 
 if os.path.exists(OBF_CLIENT) or os.path.exists(OBF_SERVER):
