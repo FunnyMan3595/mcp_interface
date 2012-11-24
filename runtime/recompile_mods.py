@@ -75,6 +75,12 @@ class Project(object):
     def __init__(self, directory):
         self.dir = directory
 
+        self.disabled = (self.get_config("DISABLE", data_type=bool)
+                         or self.get_config("DISABLED", data_type=bool))
+
+        if self.disabled:
+            return
+
         self.name            = self.get_config("PROJECT_NAME", os.path.basename(directory))
         self.version         = self.get_config("VERSION",      "alpha")
         self.package_name    = self.get_config("PACKAGE_NAME", self.name + "-" + self.version)
@@ -104,7 +110,7 @@ class Project(object):
     def collect_projects(root, projects):
         """Collects all the active projects under root into projects."""
         for (dir, subdirs, files) in os.walk(root, followlinks=True):
-            if "DISABLED" in files:
+            if "DISABLED" in files or "DISABLE" in files:
                 # This project or category has been disabled.  Skip it.
                 del subdirs[:]
                 print "Disabled project or category at %s." % dir
@@ -115,9 +121,14 @@ class Project(object):
             else:
                 # This is a project.  Create it, but do not continue into
                 # subdirectories.
-                projects.append(Project(dir))
+                project = Project(dir)
+                if project.disabled:
+                    print "Disabled project or category at %s.  (Disabled by conf/)" % dir
+                else:
+                    projects.append(Project(dir))
+                    print "Found project at %s." % dir
+
                 del subdirs[:]
-                print "Found project at %s." % dir
 
     def copy_files(self, source, dest, failcode):
         for (source_dir, subdirs, files) in os.walk(source, followlinks=True):
@@ -275,6 +286,8 @@ class Project(object):
                     replacement = self.get_config(token)
                     if replacement is not None:
                         outfile.write(replacement)
+                    elif token == "PROJECT_NAME":
+                        outfile.write(self.name)
                     else:
                         raise CompileFailed("No conf token '%s'" % token)
 
