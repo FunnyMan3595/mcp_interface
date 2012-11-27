@@ -88,6 +88,7 @@ class Project(object):
         self.dependencies    = self.get_config("DEPENDENCIES", [], data_type=list)
         self.api             = self.get_config("API",          [], data_type=list)
         self.hide_source     = self.get_config("HIDE_SOURCE",  False, data_type=bool)
+        self.suppress_warnings     = self.get_config("NOT_MY_CODE",  False, data_type=bool)
 
     def get_config(self, setting, default=None, data_type=str):
         filename = os.path.join(self.dir, "conf", setting)
@@ -320,9 +321,14 @@ class Project(object):
         else: # if side == SERVER:
             classpath = MCP_BIN_SERVER + ":" + library_classpath
 
-        command = ["javac", "-Xlint:all",
-                   "-sourcepath", ":".join(source_dirs), "-classpath",
-                   classpath, "-d", out_dir] + list(source_files)
+        if self.suppress_warnings:
+            command = ["javac",
+                       "-sourcepath", ":".join(source_dirs), "-classpath",
+                       classpath, "-d", out_dir] + list(source_files)
+        else:
+            command = ["javac", "-Xlint:all",
+                       "-sourcepath", ":".join(source_dirs), "-classpath",
+                       classpath, "-d", out_dir] + list(source_files)
 
         self.call_or_die(command, CompileFailed)
 
