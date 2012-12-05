@@ -265,10 +265,25 @@ class Project(object):
         return False
 
     def replace_conf(self, filename, output_root=None):
-        input = filename
+        input_name = filename
+        output_name_raw = self.shorten_filename(filename)
+
+        split = CONF_TOKEN.split(output_name_raw)
+        output_name = ""
+        for index, token in enumerate(split):
+            if index % 2 == 0:
+                output_name += token
+            else:
+                replacement = self.get_config(token)
+                if replacement is not None:
+                    output_name += replacement
+                elif token == "PROJECT_NAME":
+                    output_name += self.name
+                else:
+                    raise CompileFailed("No conf token '%s'" % token)
 
         if output_root is not None:
-            output = os.path.join(output_root, self.shorten_filename(filename))
+            output = os.path.join(output_root, output_name)
 
             outdir = os.path.dirname(output)
             if not os.path.exists(outdir):
@@ -284,7 +299,7 @@ class Project(object):
 
             stream = string_stream()
 
-        with open(input) as infile:
+        with open(input_name) as infile:
             contents = infile.read()
 
         split = CONF_TOKEN.split(contents)
