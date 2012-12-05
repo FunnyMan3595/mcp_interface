@@ -5,14 +5,20 @@
 # details.
 
 import itertools, os, os.path, platform, shutil, subprocess, sys, tarfile, \
-       zipfile, tempfile, fnmatch, re, collections, StringIO, contextlib
+       zipfile, tempfile, fnmatch, re, collections, StringIO, contextlib, \
+       traceback
+
+from patch import fromfile as build_patch
 
 CONF_TOKEN = re.compile("%conf:([^%]*)%")
 
-class CompileFailed(Exception):
+class KnownFailure(Exception):
     pass
 
-class ObfuscateFailed(Exception):
+class CompileFailed(KnownFailure):
+    pass
+
+class ObfuscateFailed(KnownFailure):
     pass
 
 # Convenience functions.  These make the settings settings easier to work with.
@@ -34,6 +40,10 @@ TEMP = relative("temp/mods")
 LIB = relative("lib")
 MCP_TEMP = relative("temp")
 TARGET = relative("packages")
+
+MCP_SRC = [relative("src/minecraft"),
+           relative("src/minecraft_server"),
+           relative("src/common")]
 
 # Most of this script assumes it's in the MCP directory, so let's go there.
 os.chdir(BASE)
@@ -296,17 +306,88 @@ class Project(object):
             return outfile.getvalue()
         return output
 
+    def apply_patch(self, patch_file, output_root, side):
+        patchset = build_patch(patch_file)
+        if not patchset:
+            raise CompileFailed("Malformed patch: %s" % patch_file)
+
+        patch_name = self.shorten_filename(patch_file)
+        # Store the target file for single-file patches.
+        target_file = None
+        if ".java" in patch_name.lower():
+            # Strip everything after .java.
+            target_file = patch_name[:patch_name.lower().index(".java") + 5]
+
+        src = MCP_SRC[side]
+        fallback_src = None
+        if side == FORGE:
+            fallback_src = MCP_SRC[CLIENT]
+
+        patched_files = set()
+        for patch in patchset.items:
+            # Try to figure out which file we're patching.
+            patch_target = None
+            for possible_target in [patch.source, patch.target, target_file]:
+                if possible_target is None:
+                    continue
+                possible_target = os.path.normpath(possible_target)
+
+                # Collect the locations where this possibility might be.
+                source_files = [os.path.join(src, possible_target)]
+                if fallback_src is not None:
+                    source_files.append(os.path.join(fallback_src,
+                                                     possible_target))
+
+                for source_file in source_files:
+                    if os.path.exists(source_file):
+                        # If it's actually here, use it.
+                        patch_target = possible_target
+                        target_location = os.path.join(output_root,
+                                                       patch_target)
+
+                        os.makedirs(os.path.dirname(target_location))
+                        shutil.copy2(source_file, target_location)
+
+                if patch_target is not None:
+                    break
+                else:
+                    add_warning(self, side, "Bad file specified in patch:\n    Patch file: %s\n    Target file: %s" % (patch_file, possible_target))
+
+            if patch_target is None:
+                raise CompileFailed("Multi-file patch did not specify a file to patch!\n    Patch file: %s" % (patch_file))
+            elif target_file is not None and patch_target != target_file:
+                raise CompileFailed("Single-file patch mismatch:\n    Patch file: %s\n    Target file: %s\n    Attempted to patch: %s" % (patch_file, target_file, patch_target))
+
+            # Set both properties to the target file, since we know exactly
+            # what we're patching.
+            patch.source = patch_target
+            patch.target = patch_target
+
+            patched_files.add(target_location)
+
+        if not patchset.apply(root=output_root):
+            raise CompileFailed("Patch failed to apply: %s" % (patch_file))
+
+        return patched_files
+
     def compile(self, all_projects, side, out_dir, temp_dir, library_classpath, api=False):
         create_or_clean(temp_dir)
 
         source_files = set()
+        patch_files = set()
         for dir in self.get_source_dirs(side):
             source_files.update(self.collect_files(dir, required_extension=".java"))
+            patch_files.update(self.collect_files(dir, required_extension=".diff"))
+            patch_files.update(self.collect_files(dir, required_extension=".patch"))
 
         if api:
             source_files = filter(self.is_api, source_files)
 
-        source_files = map(lambda f: self.replace_conf(f, temp_dir), source_files)
+        source_files = map(lambda f: self.replace_conf(f, temp_dir),
+                           source_files)
+        for patch in patch_files:
+            for patched_file in self.apply_patch(patch, temp_dir, side):
+                source_files.append(patched_file)
 
         source_dirs = [temp_dir]
         for dep in self.dependencies:
@@ -357,7 +438,10 @@ class Project(object):
     def call_or_die(self, cmd, error, shell=False):
         exit = subprocess.call(cmd, shell=shell)
         if exit != 0:
-            raise error("Command failed: %s" % cmd)
+            if shell:
+                raise error("Command failed: %s" % cmd)
+            else:
+                raise error("Command failed: %s" % cmd[0])
 
     def package(self, side, in_dir):
         """Packages this project's files."""
@@ -381,7 +465,7 @@ class Project(object):
             common_source = os.path.join(self.dir, "src", "common")
             if os.path.isdir(common_source) and os.listdir(common_source):
                 # To package these, we just change to the appropriate directory
-                # and let self.zip command find everything in it.
+                # and let self.zip find everything in it.
                 os.chdir(common_source)
                 self.zip(package)
                 created = True
@@ -417,7 +501,7 @@ class Project(object):
         os.chdir(BASE)
         return created
 
-have_forge = os.path.exists(relative("src/common"))
+have_forge = os.path.exists(MCP_SRC[FORGE])
 if have_forge:
     print "!!! Forge detected.  Building universal packages only. !!!"
     print
@@ -462,7 +546,7 @@ def add_warning(project, side, warning):
 
 errors = collections.defaultdict(lambda: [])
 def add_error(project, side, error):
-    errors[project].append((side, error))
+    errors[project].append((side, error, sys.exc_info()[2]))
 
 compile_temp = os.path.join(TEMP, "compile_temp")
 
@@ -533,7 +617,8 @@ if count:
 
 def print_messages(project_messages):
     for project, messages in project_messages.items():
-        for side, message in messages:
+        for info in messages:
+            side, message = info[:2]
             if side == CLIENT:
                 side_name = "client"
             elif side == SERVER:
@@ -541,6 +626,11 @@ def print_messages(project_messages):
             else: # if side == FORGE:
                 side_name = "universal"
             print "%s (%s): %s" % (project.name, side_name, message)
+
+            if len(info) == 3 and isinstance(message, Exception):
+                if not isinstance(message, KnownFailure):
+                    traceback.print_tb(info[2])
+
 
 if warnings:
     print
