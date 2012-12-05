@@ -77,7 +77,7 @@ else:
     print "You must run reobfuscate before deobfuscate_libs."
     sys.exit(1)
 
-CLASSPATH = "runtime/bin/jcommander-1.29.jar:runtime/bin/asm-all-3.3.1.jar:runtime/bin/mcp_deobfuscate-1.0.jar"
+CLASSPATH = "runtime/bin/jcommander-1.29.jar:lib/asm-all-4.0.jar:runtime/bin/mcp_deobfuscate-1.2.jar"
 MAIN_CLASS = "org.ldg.mcpd.MCPDeobfuscate"
 BASIC_COMMAND = ["java", "-classpath", CLASSPATH, MAIN_CLASS]
 class Library(object):
@@ -92,9 +92,6 @@ class Library(object):
         self.deobf_inh = self.deobf + ".inh"
 
     def build_inh(self, obfuscated):
-        classpath = "runtime/bin/jcommander-1.29.jar:runtime/bin/asm-all-3.3.1.jar:runtime/bin/mcp_deobfuscate-1.0.jar"
-        main_class = "org.ldg.mcpd.MCPDeobfuscate"
-
         if obfuscated:
             lib = self.obf
             inheritance = self.obf_inh
