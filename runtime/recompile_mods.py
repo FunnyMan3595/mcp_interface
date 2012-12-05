@@ -583,6 +583,10 @@ source_count = 0
 client_count = 0
 server_count = 0
 for project in projects:
+    if len(sys.argv) > 1 and not project.name in sys.argv:
+        print "Skipping unrequested project %s." % project.name
+        continue
+
     print "Processing %s..." % project.name
     any_created = False
 
