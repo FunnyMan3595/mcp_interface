@@ -59,12 +59,17 @@ else:
 deobfuscate_libs."""
     sys.exit(1)
 
-FORGE_INSTALLED = relative("src", "common")
+FORGE_INSTALLED = False
+with open(relative("runtime", "commands.py")) as source:
+    contents = source.read()
+    if "FML" in contents:
+        FORGE_INSTALLED = True
+
 CLIENT_SRG = os.path.join(MCP_TEMP, "client_ro.srg")
 SERVER_SRG = os.path.join(MCP_TEMP, "server_ro.srg")
 SRG = os.path.join(TEMP, "full.srg")
 
-if os.path.exists(FORGE_INSTALLED):
+if FORGE_INSTALLED:
     shutil.copy2(CLIENT_SRG, SRG)
 elif os.path.exists(CLIENT_SRG) and os.path.exists(SERVER_SRG):
     call_or_die("cat %s %s | sort -u > %s" % (CLIENT_SRG, SERVER_SRG, SRG),

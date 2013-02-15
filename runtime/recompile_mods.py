@@ -43,7 +43,7 @@ TARGET = relative("packages")
 
 MCP_SRC = [relative("src/minecraft"),
            relative("src/minecraft_server"),
-           relative("src/common")]
+           relative("src/minecraft")]
 
 # Most of this script assumes it's in the MCP directory, so let's go there.
 os.chdir(BASE)
@@ -516,8 +516,13 @@ class Project(object):
         os.chdir(BASE)
         return created
 
-have_forge = os.path.exists(MCP_SRC[FORGE])
-if have_forge:
+FORGE_INSTALLED = False
+with open(relative("runtime/commands.py")) as source:
+    contents = source.read()
+    if "FML" in contents:
+        FORGE_INSTALLED = True
+
+if FORGE_INSTALLED:
     print "!!! Forge detected.  Building universal packages only. !!!"
     print
 
@@ -550,7 +555,7 @@ projects_dict = {}
 for project in projects:
     projects_dict[project.name] = project
 
-if have_forge:
+if FORGE_INSTALLED:
     sides = [FORGE]
 else:
     sides = [CLIENT, SERVER]
@@ -622,7 +627,7 @@ for project in projects:
 
 s = "" if count == 1 else "s"
 print "%d project%s compiled and packaged successfully." % (count, s)
-if count and not have_forge:
+if count and not FORGE_INSTALLED:
     print "(%d client, %d server)" % (client_count, server_count)
 if count:
     if source_count == 0:
