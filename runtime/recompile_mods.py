@@ -429,7 +429,7 @@ class Project(object):
         self.call_or_die(command, CompileFailed)
 
     def obfuscate(self, side, stored_inheritance):
-        classpath = "runtime/bin/jcommander-1.29.jar:lib/asm-all-4.0.jar:runtime/bin/mcp_deobfuscate-1.2.jar"
+        classpath = "runtime/bin/jcommander-1.29.jar:jars/libraries/org/ow2/asm/asm-debug-all/4.1/asm-debug-all-4.1.jar:runtime/bin/mcp_deobfuscate-1.2.jar"
         main_class = "org.ldg.mcpd.MCPDeobfuscate"
         outdir = TARGET
 

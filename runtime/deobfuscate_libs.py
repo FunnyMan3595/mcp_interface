@@ -82,7 +82,7 @@ else:
     print "You must run reobfuscate before deobfuscate_libs."
     sys.exit(1)
 
-CLASSPATH = "runtime/bin/jcommander-1.29.jar:lib/asm-all-4.0.jar:runtime/bin/mcp_deobfuscate-1.2.jar"
+CLASSPATH = "runtime/bin/jcommander-1.29.jar:jars/libraries/org/ow2/asm/asm-debug-all/4.1/asm-debug-all-4.1.jar:runtime/bin/mcp_deobfuscate-1.2.jar"
 MAIN_CLASS = "org.ldg.mcpd.MCPDeobfuscate"
 BASIC_COMMAND = ["java", "-classpath", CLASSPATH, MAIN_CLASS]
 class Library(object):
