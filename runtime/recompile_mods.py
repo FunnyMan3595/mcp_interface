@@ -38,6 +38,7 @@ BASE = absolute(".")
 USER = relative("mods")
 TEMP = relative("temp/mods")
 LIB = relative("lib")
+JAR_LIB = relative("jars/libraries")
 MCP_TEMP = relative("temp")
 TARGET = relative("packages")
 
@@ -548,6 +549,15 @@ for filename in os.listdir(LIB):
         stored_inheritance.append(os.path.join(LIB, filename))
     elif extension.lower() in [".jar", ".zip"]:
         libraries.append(os.path.join(LIB, filename))
+
+if os.path.exists(JAR_LIB):
+    for (dir, subdirs, files) in os.walk(JAR_LIB, followlinks=True):
+        for filename in files:
+            base, extension = os.path.splitext(filename)
+            if extension.lower() == ".inh":
+                stored_inheritance.append(os.path.join(LIB, filename))
+            elif extension.lower() in [".jar", ".zip"]:
+                libraries.append(os.path.join(dir, filename))
 
 library_classpath = ":".join(libraries)
 
