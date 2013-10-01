@@ -10,7 +10,7 @@ import itertools, os, os.path, platform, shutil, subprocess, sys, tarfile, \
 
 from patch import fromfile as build_patch
 
-CONF_TOKEN = re.compile("%conf:([^%]*)%")
+SUBST_TOKEN = re.compile("%(conf|MD|FD|CL):([^%]*)%")
 
 class KnownFailure(Exception):
     pass
@@ -46,6 +46,8 @@ MCP_SRC = [relative("src/minecraft"),
            relative("src/minecraft_server"),
            relative("src/minecraft")]
 
+SRG = os.path.join(MCP_TEMP, "full.srg")
+
 # Most of this script assumes it's in the MCP directory, so let's go there.
 os.chdir(BASE)
 
@@ -79,6 +81,22 @@ MCP_REOBF = relative("reobf")
 # The obvious subdirectories.
 MCP_REOBF_CLIENT = os.path.join(MCP_REOBF, "minecraft")
 MCP_REOBF_SERVER = os.path.join(MCP_REOBF, "minecraft_server")
+
+OBF_KEY = collections.defaultdict(dict)
+with open(SRG) as srgfile:
+    for line in srgfile.readlines():
+        parts = line.split("#")[0].split()
+
+        if len(parts) < 2:
+            continue
+
+        line_type = parts[0].strip(":")
+        parts = parts[1:]
+
+        size = len(parts) // 2
+        obf, deobf = " ".join(parts[:size]), " ".join(parts[size:])
+
+        OBF_KEY[line_type][deobf] = obf
 
 # This class is used to represent a user project, also known as a subdirectory
 # of USER.  The format is described in the README.
@@ -218,7 +236,7 @@ class Project(object):
                     for file in files:
                         full_path = os.path.join(dir, file)
                         if do_replace:
-                            contents = self.replace_conf(full_path)
+                            contents = self.replace_tokens(full_path)
                             full_path = os.path.relpath(full_path)
                             archive.writestr(full_path, contents)
                         else:
@@ -226,7 +244,7 @@ class Project(object):
             else:
                 for file in files:
                     if do_replace:
-                        contents = self.replace_conf(file)
+                        contents = self.replace_tokens(file)
                         full_path = os.path.relpath(full_path)
                         archive.writestr(file, contents)
                     else:
@@ -265,23 +283,40 @@ class Project(object):
 
         return False
 
-    def replace_conf(self, filename, output_root=None):
+    def do_replacement(self, subst_type, value):
+        if subst_type == "conf":
+            replacement = self.get_config(value)
+            if replacement is not None:
+                return replacement
+            elif token == "PROJECT_NAME":
+                return self.name
+            else:
+                raise CompileFailed("No conf token '%s'" % value)
+        elif subst_type in OBF_KEY:
+            # One of the SRG-based ones.
+            replacement = OBF_KEY[subst_type].get(value, None)
+            if replacement is not None:
+                return replacement
+            else:
+                raise CompileFailed("No SRG entry of type %s for '%s'" %
+                                                    (subst_type, value))
+        else:
+            raise CompileFailed("Unrecognized subst token '%%%s:%s%%'" %
+                                                    (subst_type, value))
+
+    def replace_tokens(self, filename, output_root=None):
         input_name = filename
         output_name_raw = self.shorten_filename(filename)
 
-        split = CONF_TOKEN.split(output_name_raw)
+        split = SUBST_TOKEN.split(output_name_raw)
         output_name = ""
         for index, token in enumerate(split):
-            if index % 2 == 0:
+            if index % 3 == 0:
                 output_name += token
+            elif index % 3 == 1:
+                token_type = token
             else:
-                replacement = self.get_config(token)
-                if replacement is not None:
-                    output_name += replacement
-                elif token == "PROJECT_NAME":
-                    output_name += self.name
-                else:
-                    raise CompileFailed("No conf token '%s'" % token)
+                output_name += self.do_replacement(token_type, token)
 
         if output_root is not None:
             output = os.path.join(output_root, output_name)
@@ -303,20 +338,16 @@ class Project(object):
         with open(input_name) as infile:
             contents = infile.read()
 
-        split = CONF_TOKEN.split(contents)
+        split = SUBST_TOKEN.split(contents)
 
         with stream as outfile:
             for index, token in enumerate(split):
-                if index % 2 == 0:
+                if index % 3 == 0:
                     outfile.write(token)
+                elif index % 3 == 1:
+                    token_type = token
                 else:
-                    replacement = self.get_config(token)
-                    if replacement is not None:
-                        outfile.write(replacement)
-                    elif token == "PROJECT_NAME":
-                        outfile.write(self.name)
-                    else:
-                        raise CompileFailed("No conf token '%s'" % token)
+                    outfile.write(self.do_replacement(token_type, token))
 
         if output is None:
             return outfile.getvalue()
@@ -399,7 +430,7 @@ class Project(object):
         if api:
             source_files = filter(self.is_api, source_files)
 
-        source_files = map(lambda f: self.replace_conf(f, temp_dir),
+        source_files = map(lambda f: self.replace_tokens(f, temp_dir),
                            source_files)
         for patch in patch_files:
             for patched_file in self.apply_patch(patch, temp_dir, side):
@@ -678,4 +709,5 @@ if errors:
 
     print_messages(errors)
 
-    sys.exit(len(errors))
+    if __name__ == "__main__":
+        sys.exit(len(errors))

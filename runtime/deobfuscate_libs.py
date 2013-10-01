@@ -67,7 +67,7 @@ with open(relative("runtime", "commands.py")) as source:
 
 CLIENT_SRG = os.path.join(MCP_TEMP, "client_ro.srg")
 SERVER_SRG = os.path.join(MCP_TEMP, "server_ro.srg")
-SRG = os.path.join(TEMP, "full.srg")
+SRG = os.path.join(MCP_TEMP, "full.srg")
 
 if FORGE_INSTALLED:
     shutil.copy2(CLIENT_SRG, SRG)
