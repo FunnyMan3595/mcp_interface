@@ -288,7 +288,7 @@ class Project(object):
             replacement = self.get_config(value)
             if replacement is not None:
                 return replacement
-            elif token == "PROJECT_NAME":
+            elif value == "PROJECT_NAME":
                 return self.name
             else:
                 raise CompileFailed("No conf token '%s'" % value)
